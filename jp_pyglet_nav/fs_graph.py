@@ -33,7 +33,7 @@ def spiral_positions(n: int, radius: float, z_step: float) -> List[Vec3]:
 
 def make_nodes(root: Path, parent: Optional[Path], limit: int) -> List[Node]:
     children = safe_children(root, limit)
-    pos = spiral_positions(len(children), radius=2.5, z_step=0.32)
+    pos = spiral_positions(len(children), radius=3.5, z_step=0.25)  # Increased radius, reduced z-step
     return [
         Node(
             path=p,
@@ -77,8 +77,8 @@ def project(p: Vec3, cam: Camera, size: Vec2) -> Optional[Tuple[float, float, fl
 
 
 def node_radius(z: float, is_dir: bool) -> float:
-    base = 24.0 if is_dir else 18.0
-    return clamp(base * (2.8 / clamp(z, 0.3, 40.0)), 7.0, 38.0)
+    base = 45.0 if is_dir else 35.0  # Increased from 24/18
+    return clamp(base * (2.8 / clamp(z, 0.3, 40.0)), 15.0, 80.0)  # Increased min/max
 
 
 def screen_points(nodes: Sequence[Node], cam: Camera, size: Vec2) -> List[ScreenPoint]:
