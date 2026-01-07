@@ -34,7 +34,7 @@ def darken(color: RGBA, factor: float) -> RGBA:
 
 
 def lighten(color: RGBA, factor: float) -> RGBA:
-    """Lighten a color by a factor (1.0+)"""
+    """Lighten a color by a factor (>= 1.0). Values < 1.0 will darken."""
     r, g, b, a = color
     return (min(255, int(r * factor)), min(255, int(g * factor)), min(255, int(b * factor)), a)
 

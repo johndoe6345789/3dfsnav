@@ -128,6 +128,7 @@ class NavigatorWindow(pyglet.window.Window):
 
         # Draw connecting wires first (behind nodes)
         for i, p in enumerate(self.pts):
+            # Draw wire to parent directory (skip if parent is the immediate filesystem parent)
             if p.node.parent and p.node.parent != p.node.path.parent:
                 # Find parent node in pts
                 for parent_p in self.pts:
@@ -137,11 +138,11 @@ class NavigatorWindow(pyglet.window.Window):
 
         # Draw nodes on top
         for p in self.pts:
-            # Use age-based colors for files (simulate with simple variation)
+            # Use simple hash-based color variation for visual diversity
             if p.node.is_dir:
                 fill = NODE_DIR
             else:
-                # Vary file colors based on name hash for visual variety
+                # Vary file colors using name hash (simulates age-based coloring)
                 h = hash(p.node.name) % 3
                 if h == 0:
                     fill = FILE_NEW
