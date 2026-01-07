@@ -18,9 +18,7 @@ from .style import (
     FG_DIM,
     GRID,
     NODE_DIR,
-    FILE_NEW,
-    FILE_MID,
-    FILE_OLD,
+    FILE_COLORS,
     WARN,
     WIRE,
 )
@@ -142,14 +140,9 @@ class NavigatorWindow(pyglet.window.Window):
             if p.node.is_dir:
                 fill = NODE_DIR
             else:
-                # Vary file colors using name hash (simulates age-based coloring)
-                h = hash(p.node.name) % 3
-                if h == 0:
-                    fill = FILE_NEW
-                elif h == 1:
-                    fill = FILE_MID
-                else:
-                    fill = FILE_OLD
+                # Vary file colors using all 7 colors from original FSN
+                color_index = hash(p.node.name) % len(FILE_COLORS)
+                fill = FILE_COLORS[color_index]
             
             is_hover = self.hover and self.hover.node.path == p.node.path
             outline = FG if is_hover else FG_DIM
