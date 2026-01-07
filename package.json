@@ -1,0 +1,24 @@
+{
+  "name": "3dfsnav",
+  "version": "1.0.0",
+  "description": "Jurassic UNIX Navigator - A cinematic 3D file system navigator inspired by Jurassic Park FSN",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx http-server -p 8080",
+    "test": "playwright test",
+    "test:headed": "playwright test --headed"
+  },
+  "keywords": [
+    "jurassic-park",
+    "fsn",
+    "file-navigator",
+    "webgl",
+    "3d"
+  ],
+  "author": "johndoe6345789",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "http-server": "^14.1.1"
+  }
+}
