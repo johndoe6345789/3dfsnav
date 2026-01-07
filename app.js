@@ -163,6 +163,11 @@ class Node {
         this.isDir = isDir;
         this.pos = pos; // [x, y, z]
         this.parent = parent;
+        this.scale = 0; // Start at 0 for fade-in animation
+        this.targetScale = 1.0;
+        this.hoverScale = 1.0;
+        this.opacity = 0; // Start invisible for fade-in
+        this.selected = false; // Track selection state
     }
 }
 
@@ -182,8 +187,18 @@ class FSNavigator {
         this.camera = new Camera();
         this.nodes = [];
         this.hover = null;
+        this.selected = null; // Track selected node
         this.dragging = false;
         this.lastMouse = { x: 0, y: 0 };
+        this.lastClickTime = 0; // For double-click detection
+        this.clickTimeout = null;
+        this.animations = []; // Active animations
+        this.isAnimating = false; // Flag for drill down/out animations
+        this.nodeAppearTime = 0; // For staggered node appearance
+        
+        // Get 2D context for text labels
+        this.labelCanvas = document.getElementById('labelCanvas');
+        this.labelCtx = this.labelCanvas.getContext('2d');
         
         // Initialize WebGL
         this.initWebGL();
@@ -293,10 +308,15 @@ class FSNavigator {
             if (this.dragging) {
                 const dx = e.clientX - this.lastMouse.x;
                 const dy = e.clientY - this.lastMouse.y;
-                this.camera.yaw += dx * 0.008;
-                this.camera.pitch = Math.max(-1.4, Math.min(1.4, this.camera.pitch + dy * 0.006));
+                
+                // Smooth camera rotation
+                const newYaw = this.camera.yaw + dx * 0.008;
+                const newPitch = Math.max(-1.4, Math.min(1.4, this.camera.pitch + dy * 0.006));
+                
+                this.animateCameraProperty('yaw', newYaw, 100, Easing.easeOut);
+                this.animateCameraProperty('pitch', newPitch, 100, Easing.easeOut);
+                
                 this.lastMouse = { x: e.clientX, y: e.clientY };
-                this.updateCameraPosition();
             } else {
                 this.updateHover(e.clientX, e.clientY);
             }
@@ -307,7 +327,27 @@ class FSNavigator {
                 this.dragging = false;
                 const hit = this.hitTest(e.clientX, e.clientY);
                 if (hit) {
-                    this.openNode(hit);
+                    // Detect double-click
+                    const now = Date.now();
+                    const timeSinceLastClick = now - this.lastClickTime;
+                    
+                    if (timeSinceLastClick < 300) { // Double-click within 300ms
+                        // Clear any pending single-click action
+                        if (this.clickTimeout) {
+                            clearTimeout(this.clickTimeout);
+                            this.clickTimeout = null;
+                        }
+                        // Double-click: open/enter
+                        this.openNode(hit);
+                        this.lastClickTime = 0; // Reset
+                    } else {
+                        // Single-click: select and fly to object (with delay to detect double-click)
+                        this.clickTimeout = setTimeout(() => {
+                            this.selectNode(hit);
+                            this.clickTimeout = null;
+                        }, 300);
+                        this.lastClickTime = now;
+                    }
                 }
             }
         });
@@ -351,12 +391,27 @@ class FSNavigator {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
         this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+        
+        // Also resize label canvas
+        this.labelCanvas.width = window.innerWidth;
+        this.labelCanvas.height = window.innerHeight;
     }
     
     refresh() {
         this.nodes = this.makeNodes(this.currentPath);
         this.hover = null;
         this.updateHUD();
+        this.nodeAppearTime = Date.now();
+        
+        // Animate nodes appearing
+        this.nodes.forEach((node, i) => {
+            node.scale = 0;
+            node.opacity = 0;
+            const delay = i * 30; // Stagger appearance
+            setTimeout(() => {
+                this.animateNodeAppear(node);
+            }, delay);
+        });
     }
     
     makeNodes(path) {
@@ -542,21 +597,197 @@ class FSNavigator {
     }
     
     zoom(delta) {
-        this.camera.dist = Math.max(2.5, Math.min(20.0, this.camera.dist + delta));
-        this.updateCameraPosition();
+        const newDist = Math.max(2.5, Math.min(20.0, this.camera.dist + delta));
+        this.animateCameraProperty('dist', newDist, 300, Easing.easeOut);
+    }
+    
+    animateCameraProperty(property, targetValue, duration = 500, easingFn = Easing.easeInOutCubic) {
+        const startValue = this.camera[property];
+        const anim = new Animation(
+            startValue,
+            targetValue,
+            duration,
+            easingFn,
+            (value) => {
+                this.camera[property] = value;
+                if (property === 'yaw' || property === 'pitch' || property === 'dist') {
+                    this.updateCameraPosition();
+                }
+            }
+        );
+        this.animations.push(anim);
+    }
+    
+    animateNodeAppear(node) {
+        const scaleAnim = new Animation(
+            0,
+            1.0,
+            400,
+            Easing.easeOutElastic,
+            (value) => {
+                node.scale = value;
+            }
+        );
+        const opacityAnim = new Animation(
+            0,
+            1.0,
+            300,
+            Easing.easeOut,
+            (value) => {
+                node.opacity = value;
+            }
+        );
+        this.animations.push(scaleAnim);
+        this.animations.push(opacityAnim);
     }
     
     goUp() {
         if (this.currentPath === '/') return;
+        if (this.isAnimating) return; // Don't allow navigation during animation
+        
         const lastSlash = this.currentPath.lastIndexOf('/');
-        this.currentPath = lastSlash === 0 ? '/' : this.currentPath.substring(0, lastSlash);
-        this.refresh();
+        const newPath = lastSlash === 0 ? '/' : this.currentPath.substring(0, lastSlash);
+        
+        // Hollywood-style drill OUT animation
+        this.drillOut(newPath);
+    }
+    
+    selectNode(node) {
+        // Deselect previous node
+        if (this.selected) {
+            this.selected.selected = false;
+        }
+        
+        // Select new node
+        this.selected = node;
+        node.selected = true;
+        
+        // Fly camera to the selected object with cinematic movement
+        this.flyToNode(node);
+        this.updateHUD();
+    }
+    
+    flyToNode(node) {
+        if (this.isAnimating) return;
+        
+        this.isAnimating = true;
+        const targetPos = node.pos;
+        
+        // Calculate optimal viewing angle
+        const targetYaw = Math.atan2(targetPos[0], targetPos[2]);
+        const targetPitch = 0.4;
+        const targetDist = 3.5; // Get closer to the object
+        
+        // Animate camera to focus on the node
+        this.animateCameraProperty('yaw', targetYaw, 800, Easing.easeInOutCubic);
+        this.animateCameraProperty('pitch', targetPitch, 800, Easing.easeInOutCubic);
+        this.animateCameraProperty('dist', targetDist, 800, Easing.easeInOutCubic);
+        
+        setTimeout(() => {
+            this.isAnimating = false;
+        }, 900);
+    }
+    
+    drillDown(node) {
+        this.isAnimating = true;
+        
+        // Fade out all nodes except the target
+        this.nodes.forEach(n => {
+            if (n !== node) {
+                const fadeAnim = new Animation(
+                    n.opacity,
+                    0,
+                    400,
+                    Easing.easeIn,
+                    (value) => {
+                        n.opacity = value;
+                    }
+                );
+                this.animations.push(fadeAnim);
+            }
+        });
+        
+        // Zoom and dive into the target with spinning
+        const startYaw = this.camera.yaw;
+        const startPitch = this.camera.pitch;
+        const startDist = this.camera.dist;
+        
+        const targetYaw = startYaw + Math.PI * 0.5; // Add spin
+        const targetPitch = 0.3;
+        const targetDist = 2.0; // Zoom way in
+        
+        // Animate camera with dramatic swooping
+        this.animateCameraProperty('yaw', targetYaw, 600, Easing.easeInOutCubic);
+        this.animateCameraProperty('pitch', targetPitch, 600, Easing.easeInOutCubic);
+        this.animateCameraProperty('dist', targetDist, 600, Easing.easeIn);
+        
+        // After animation, navigate and zoom back out
+        setTimeout(() => {
+            this.currentPath = node.path;
+            this.refresh();
+            
+            // Reset camera to normal viewing position
+            this.camera.yaw = 0.3;
+            this.camera.pitch = 0.6;
+            this.camera.dist = 6.0;
+            this.updateCameraPosition();
+            
+            this.isAnimating = false;
+        }, 650);
+    }
+    
+    drillOut(newPath) {
+        this.isAnimating = true;
+        
+        // Fade out all nodes
+        this.nodes.forEach(n => {
+            const fadeAnim = new Animation(
+                n.opacity,
+                0,
+                300,
+                Easing.easeIn,
+                (value) => {
+                    n.opacity = value;
+                }
+            );
+            this.animations.push(fadeAnim);
+        });
+        
+        // Dramatic pull-back and rise
+        const startYaw = this.camera.yaw;
+        const startPitch = this.camera.pitch;
+        const startDist = this.camera.dist;
+        
+        const targetYaw = startYaw - Math.PI * 0.3; // Spin opposite direction
+        const targetPitch = 1.0; // Look down from above
+        const targetDist = 12.0; // Pull way back
+        
+        // Animate camera with dramatic rise
+        this.animateCameraProperty('yaw', targetYaw, 500, Easing.easeInOutCubic);
+        this.animateCameraProperty('pitch', targetPitch, 500, Easing.easeOut);
+        this.animateCameraProperty('dist', targetDist, 500, Easing.easeOut);
+        
+        // After animation, navigate and reset view
+        setTimeout(() => {
+            this.currentPath = newPath;
+            this.refresh();
+            
+            // Reset camera to normal viewing position
+            this.camera.yaw = 0.3;
+            this.camera.pitch = 0.6;
+            this.camera.dist = 6.0;
+            this.updateCameraPosition();
+            
+            this.isAnimating = false;
+        }, 550);
     }
     
     openNode(node) {
+        if (this.isAnimating) return; // Don't allow navigation during animation
+        
         if (node.isDir) {
-            this.currentPath = node.path;
-            this.refresh();
+            // Hollywood-style drill DOWN animation
+            this.drillDown(node);
         } else {
             console.log('Opening file:', node.path);
             alert('Opening file: ' + node.name);
@@ -566,10 +797,13 @@ class FSNavigator {
     updateHUD() {
         const hud = document.getElementById('hud');
         const hint = document.getElementById('hint');
-        const helpText = 'Drag=rotate  Enter=open  Backspace=up  Wheel=zoom  Esc=quit';
+        const helpText = 'Drag=rotate  Click=select  DblClick=enter  Backspace=up  Wheel=zoom  Esc=quit';
         hud.textContent = `${this.shortPath(this.currentPath)}   |   ${helpText}`;
         
-        if (this.hover) {
+        if (this.selected) {
+            const tag = this.selected.isDir ? 'dir' : 'file';
+            hint.textContent = `SELECTED ${tag}: ${this.shortPath(this.selected.path, 120)}`;
+        } else if (this.hover) {
             const tag = this.hover.isDir ? 'dir' : 'file';
             hint.textContent = `${tag}: ${this.shortPath(this.hover.path, 120)}`;
         } else {
@@ -584,6 +818,16 @@ class FSNavigator {
     
     render() {
         const gl = this.gl;
+        
+        // Update all active animations
+        this.animations = this.animations.filter(anim => !anim.update());
+        
+        // Update hover animation
+        this.nodes.forEach(node => {
+            const isHovered = this.hover && this.hover.path === node.path;
+            const targetHover = isHovered ? 1.2 : 1.0;
+            node.hoverScale += (targetHover - node.hoverScale) * 0.15;
+        });
         
         // Clear
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -604,6 +848,9 @@ class FSNavigator {
         
         // Draw nodes
         this.drawNodes(projectionMatrix, viewMatrix);
+        
+        // Draw labels on top
+        this.drawLabels(projectionMatrix, viewMatrix);
         
         requestAnimationFrame(() => this.render());
     }
@@ -724,30 +971,49 @@ class FSNavigator {
         
         for (const node of this.nodes) {
             const isHover = this.hover && this.hover.path === node.path;
+            const isSelected = this.selected && this.selected.path === node.path;
             let color;
             
             if (node.isDir) {
-                color = COLORS.NODE_DIR;
+                // Enhanced red for directories, brighter if selected
+                color = isSelected ? [1.0, 0.3, 0.3, node.opacity] : [0.95, 0.15, 0.15, node.opacity];
             } else {
+                // Enhanced file colors with better visibility
                 const colorIndex = this.hashCode(node.name) % COLORS.FILE_COLORS.length;
-                color = COLORS.FILE_COLORS[Math.abs(colorIndex)];
+                const baseColor = COLORS.FILE_COLORS[Math.abs(colorIndex)];
+                // Boost brightness for better visibility
+                color = [
+                    Math.min(1.0, baseColor[0] * 1.2),
+                    Math.min(1.0, baseColor[1] * 1.2),
+                    Math.min(1.0, baseColor[2] * 1.2),
+                    node.opacity
+                ];
             }
             
-            this.drawNode(node, color, isHover, projectionMatrix, viewMatrix);
+            this.drawNode(node, color, isHover, isSelected, projectionMatrix, viewMatrix);
         }
     }
     
-    drawNode(node, color, isHover, projectionMatrix, viewMatrix) {
+    drawNode(node, color, isHover, isSelected, projectionMatrix, viewMatrix) {
         const gl = this.gl;
         const pos = node.pos;
         
-        // Create box geometry
-        const width = node.isDir ? 0.3 : 0.25;
-        const height = node.isDir ? 0.8 : 0.3;
-        const depth = node.isDir ? 0.3 : 0.25;
+        // Create box geometry with animation scale
+        const baseWidth = node.isDir ? 0.3 : 0.25;
+        const baseHeight = node.isDir ? 0.8 : 0.3;
+        const baseDepth = node.isDir ? 0.3 : 0.25;
         
-        const vertices = this.createBoxVertices(width, height, depth);
-        const colors = this.createBoxColors(color, vertices.length / 3, isHover);
+        // Apply scale from animations and hover
+        const totalScale = node.scale * node.hoverScale;
+        const width = baseWidth * totalScale;
+        const height = baseHeight * totalScale;
+        const depth = baseDepth * totalScale;
+        
+        // Add pulsing effect for selected nodes
+        const pulseScale = isSelected ? 1.0 + Math.sin(Date.now() * 0.005) * 0.1 : 1.0;
+        
+        const vertices = this.createBoxVertices(width * pulseScale, height * pulseScale, depth * pulseScale);
+        const colors = this.createBoxColors(color, vertices.length / 3, isHover, isSelected);
         
         // Create model matrix (translation)
         const modelMatrix = this.createTranslationMatrix(pos[0], pos[1] + height/2, pos[2]);
@@ -807,17 +1073,18 @@ class FSNavigator {
         ];
     }
     
-    createBoxColors(baseColor, numVertices, isHover) {
+    createBoxColors(baseColor, numVertices, isHover, isSelected) {
         const colors = [];
-        const brightness = isHover ? 1.5 : 1.0;
+        const brightness = isHover ? 1.4 : 1.0;
+        const selectedGlow = isSelected ? 1.3 : 1.0;
         
         for (let i = 0; i < numVertices; i++) {
             // Vary brightness by face
             const faceBrightness = 0.7 + (i % 6) * 0.05;
             colors.push(
-                baseColor[0] * brightness * faceBrightness,
-                baseColor[1] * brightness * faceBrightness,
-                baseColor[2] * brightness * faceBrightness,
+                Math.min(1.0, baseColor[0] * brightness * selectedGlow * faceBrightness),
+                Math.min(1.0, baseColor[1] * brightness * selectedGlow * faceBrightness),
+                Math.min(1.0, baseColor[2] * brightness * selectedGlow * faceBrightness),
                 baseColor[3]
             );
         }
@@ -832,6 +1099,69 @@ class FSNavigator {
             hash |= 0;
         }
         return hash;
+    }
+    
+    drawLabels(projectionMatrix, viewMatrix) {
+        const ctx = this.labelCtx;
+        
+        // Clear label canvas
+        ctx.clearRect(0, 0, this.labelCanvas.width, this.labelCanvas.height);
+        
+        // Set font style
+        ctx.font = '11px "Courier New", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        
+        for (const node of this.nodes) {
+            if (node.opacity < 0.1) continue; // Skip invisible nodes
+            
+            // Calculate label position (below the node)
+            const labelY = node.pos[1] - 0.3;
+            const labelPos = [node.pos[0], labelY, node.pos[2]];
+            const projected = this.projectPoint(labelPos);
+            
+            if (!projected) continue;
+            
+            // Convert from normalized device coordinates to screen coordinates
+            const screenX = (projected[0] * 0.5 + 0.5) * this.labelCanvas.width;
+            const screenY = (1.0 - (projected[1] * 0.5 + 0.5)) * this.labelCanvas.height;
+            
+            // Skip if off-screen
+            if (screenX < 0 || screenX > this.labelCanvas.width || 
+                screenY < 0 || screenY > this.labelCanvas.height) continue;
+            
+            // Determine label color and style
+            const isHovered = this.hover && this.hover.path === node.path;
+            const isSelected = this.selected && this.selected.path === node.path;
+            
+            let labelColor;
+            let shadowBlur = 3;
+            
+            if (isSelected) {
+                labelColor = `rgba(255, 239, 91, ${node.opacity})`; // Bright yellow for selected
+                shadowBlur = 8;
+            } else if (isHovered) {
+                labelColor = `rgba(119, 225, 255, ${node.opacity})`; // Cyan for hover
+                shadowBlur = 6;
+            } else if (node.isDir) {
+                labelColor = `rgba(255, 150, 150, ${node.opacity})`; // Light red for directories
+            } else {
+                labelColor = `rgba(123, 193, 167, ${node.opacity * 0.9})`; // Dim green for files
+            }
+            
+            // Draw label with glow effect
+            ctx.shadowColor = labelColor;
+            ctx.shadowBlur = shadowBlur;
+            ctx.fillStyle = labelColor;
+            
+            // Truncate long names
+            let displayName = node.name;
+            if (displayName.length > 12) {
+                displayName = displayName.substring(0, 10) + '…';
+            }
+            
+            ctx.fillText(displayName, screenX, screenY);
+        }
     }
 }
 
