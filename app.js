@@ -1,15 +1,17 @@
-// Jurassic UNIX Navigator - Canvas 2D Implementation
+// Jurassic UNIX Navigator - WebGL Implementation
 // A cinematic 3D file system navigator inspired by Jurassic Park
 
 // Color scheme - authentic Jurassic Park FSN colors
 const COLORS = {
     BG: [0, 0, 0, 1],
-    GRID: [25/255, 94/255, 48/255, 1],
+    FLOOR_RED: [0.7, 0.15, 0.25, 1],
+    FLOOR_BLUE: [0.25, 0.35, 0.75, 1],
+    GRID_LINE: [0, 0.7, 0.7, 0.8],
     FG: [119/255, 225/255, 255/255, 1],
     FG_DIM: [123/255, 193/255, 167/255, 1],
     WARN: [255/255, 239/255, 91/255, 1],
     ACCENT: [119/255, 225/255, 255/255, 1],
-    NODE_DIR: [255/255, 0, 0, 1],
+    NODE_DIR: [0.95, 0.15, 0.15, 1],
     WIRE: [123/255, 193/255, 167/255, 1],
     FILE_COLORS: [
         [19/255, 123/255, 177/255, 1],
@@ -86,9 +88,12 @@ expandMockFS();
 class Camera {
     constructor() {
         this.yaw = 0.3;
-        this.pitch = 0.4;
-        this.dist = 4.5;
-        this.fov = 1.2;
+        this.pitch = 0.6;
+        this.dist = 6.0;
+        this.fov = 45.0; // degrees for perspective matrix
+        this.position = [0, 2.5, 6.0];
+        this.target = [0, 0, 0];
+        this.up = [0, 1, 0];
     }
 }
 
@@ -103,25 +108,14 @@ class Node {
     }
 }
 
-// Screen point after projection
-class ScreenPoint {
-    constructor(x, y, z, r, node) {
-        this.x = x;
-        this.y = y;
-        this.z = z;
-        this.r = r;
-        this.node = node;
-    }
-}
-
 // Main application class
 class FSNavigator {
     constructor() {
         this.canvas = document.getElementById('canvas');
-        this.ctx = this.canvas.getContext('2d');
+        this.gl = this.canvas.getContext('webgl') || this.canvas.getContext('experimental-webgl');
         
-        if (!this.ctx) {
-            alert('Canvas 2D not supported');
+        if (!this.gl) {
+            alert('WebGL not supported');
             return;
         }
         
@@ -129,15 +123,104 @@ class FSNavigator {
         this.limit = 140;
         this.camera = new Camera();
         this.nodes = [];
-        this.screenPoints = [];
         this.hover = null;
         this.dragging = false;
         this.lastMouse = { x: 0, y: 0 };
+        
+        // Initialize WebGL
+        this.initWebGL();
+        this.initShaders();
+        this.initBuffers();
         
         this.setupEventListeners();
         this.resize();
         this.refresh();
         this.render();
+    }
+    
+    initWebGL() {
+        const gl = this.gl;
+        gl.enable(gl.DEPTH_TEST);
+        gl.depthFunc(gl.LEQUAL);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    }
+    
+    initShaders() {
+        const gl = this.gl;
+        
+        // Vertex shader
+        const vsSource = `
+            attribute vec3 aPosition;
+            attribute vec4 aColor;
+            
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+            
+            varying vec4 vColor;
+            
+            void main() {
+                gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(aPosition, 1.0);
+                vColor = aColor;
+            }
+        `;
+        
+        // Fragment shader
+        const fsSource = `
+            precision mediump float;
+            varying vec4 vColor;
+            
+            void main() {
+                gl_FragColor = vColor;
+            }
+        `;
+        
+        const vertexShader = this.loadShader(gl.VERTEX_SHADER, vsSource);
+        const fragmentShader = this.loadShader(gl.FRAGMENT_SHADER, fsSource);
+        
+        this.shaderProgram = gl.createProgram();
+        gl.attachShader(this.shaderProgram, vertexShader);
+        gl.attachShader(this.shaderProgram, fragmentShader);
+        gl.linkProgram(this.shaderProgram);
+        
+        if (!gl.getProgramParameter(this.shaderProgram, gl.LINK_STATUS)) {
+            alert('Shader program failed to link');
+            return;
+        }
+        
+        this.programInfo = {
+            program: this.shaderProgram,
+            attribLocations: {
+                position: gl.getAttribLocation(this.shaderProgram, 'aPosition'),
+                color: gl.getAttribLocation(this.shaderProgram, 'aColor'),
+            },
+            uniformLocations: {
+                projectionMatrix: gl.getUniformLocation(this.shaderProgram, 'uProjectionMatrix'),
+                modelViewMatrix: gl.getUniformLocation(this.shaderProgram, 'uModelViewMatrix'),
+            },
+        };
+    }
+    
+    loadShader(type, source) {
+        const gl = this.gl;
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert('Shader compilation error: ' + gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        
+        return shader;
+    }
+    
+    initBuffers() {
+        // Buffers will be created dynamically for floor and nodes
+        this.floorBuffer = null;
+        this.nodeBuffers = [];
     }
     
     setupEventListeners() {
@@ -153,9 +236,9 @@ class FSNavigator {
                 const dx = e.clientX - this.lastMouse.x;
                 const dy = e.clientY - this.lastMouse.y;
                 this.camera.yaw += dx * 0.008;
-                this.camera.pitch = Math.max(-1.2, Math.min(1.2, this.camera.pitch + dy * 0.006));
+                this.camera.pitch = Math.max(-1.4, Math.min(1.4, this.camera.pitch + dy * 0.006));
                 this.lastMouse = { x: e.clientX, y: e.clientY };
-                this.compute();
+                this.updateCameraPosition();
             } else {
                 this.updateHover(e.clientX, e.clientY);
             }
@@ -166,7 +249,7 @@ class FSNavigator {
                 this.dragging = false;
                 const hit = this.hitTest(e.clientX, e.clientY);
                 if (hit) {
-                    this.openNode(hit.node);
+                    this.openNode(hit);
                 }
             }
         });
@@ -178,14 +261,13 @@ class FSNavigator {
         
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                // Cannot close browser window from JavaScript
                 console.log('Escape pressed - would close in desktop app');
             } else if (e.key === 'Backspace') {
                 e.preventDefault();
                 this.goUp();
             } else if (e.key === 'Enter') {
                 if (this.hover) {
-                    this.openNode(this.hover.node);
+                    this.openNode(this.hover);
                 }
             } else if (e.key === '+' || e.key === '=') {
                 this.zoom(-0.4);
@@ -195,16 +277,27 @@ class FSNavigator {
         });
     }
     
+    updateCameraPosition() {
+        const dist = this.camera.dist;
+        const yaw = this.camera.yaw;
+        const pitch = this.camera.pitch;
+        
+        this.camera.position = [
+            Math.sin(yaw) * Math.cos(pitch) * dist,
+            Math.sin(pitch) * dist + 1.5,
+            Math.cos(yaw) * Math.cos(pitch) * dist
+        ];
+    }
+    
     resize() {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
-        this.compute();
+        this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     }
     
     refresh() {
         this.nodes = this.makeNodes(this.currentPath);
         this.hover = null;
-        this.compute();
         this.updateHUD();
     }
     
@@ -215,7 +308,7 @@ class FSNavigator {
         }
         
         const children = entry.children.slice(0, this.limit);
-        const positions = this.spiralPositions(children.length, 3.5, 0.25);
+        const positions = this.spiralPositions(children.length, 3.5, 0.2);
         
         return children.map((childName, i) => {
             const childPath = path === '/' ? '/' + childName : path + '/' + childName;
@@ -236,83 +329,150 @@ class FSNavigator {
             const a = i * 0.72;
             const r = radius * (0.35 + 0.65 * (i / Math.max(1, n - 1)));
             const x = Math.cos(a) * r;
-            const y = Math.sin(a) * r;
-            const z = -i * zStep;
+            const z = Math.sin(a) * r;
+            const y = 0.0; // All nodes on the floor plane
             positions.push([x, y, z]);
         }
         return positions;
     }
     
-    compute() {
-        this.screenPoints = this.projectNodes();
+    // Matrix math utilities
+    createPerspectiveMatrix(fov, aspect, near, far) {
+        const f = 1.0 / Math.tan((fov * Math.PI / 180.0) / 2);
+        const nf = 1 / (near - far);
+        
+        return [
+            f / aspect, 0, 0, 0,
+            0, f, 0, 0,
+            0, 0, (far + near) * nf, -1,
+            0, 0, (2 * far * near) * nf, 0
+        ];
     }
     
-    projectNodes() {
-        const points = [];
-        for (const node of this.nodes) {
-            const projected = this.project(node.pos);
-            if (projected) {
-                const [sx, sy, z] = projected;
-                const r = this.nodeRadius(z, node.isDir);
-                points.push(new ScreenPoint(sx, sy, z, r, node));
+    createLookAtMatrix(eye, target, up) {
+        const zAxis = this.normalize([
+            eye[0] - target[0],
+            eye[1] - target[1],
+            eye[2] - target[2]
+        ]);
+        const xAxis = this.normalize(this.cross(up, zAxis));
+        const yAxis = this.cross(zAxis, xAxis);
+        
+        return [
+            xAxis[0], yAxis[0], zAxis[0], 0,
+            xAxis[1], yAxis[1], zAxis[1], 0,
+            xAxis[2], yAxis[2], zAxis[2], 0,
+            -this.dot(xAxis, eye), -this.dot(yAxis, eye), -this.dot(zAxis, eye), 1
+        ];
+    }
+    
+    createTranslationMatrix(x, y, z) {
+        return [
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+            x, y, z, 1
+        ];
+    }
+    
+    createScaleMatrix(x, y, z) {
+        return [
+            x, 0, 0, 0,
+            0, y, 0, 0,
+            0, 0, z, 0,
+            0, 0, 0, 1
+        ];
+    }
+    
+    multiplyMatrices(a, b) {
+        const result = new Array(16);
+        for (let i = 0; i < 4; i++) {
+            for (let j = 0; j < 4; j++) {
+                result[i * 4 + j] = 0;
+                for (let k = 0; k < 4; k++) {
+                    result[i * 4 + j] += a[i * 4 + k] * b[k * 4 + j];
+                }
             }
         }
-        points.sort((a, b) => b.z - a.z);
-        return points;
+        return result;
     }
     
-    rotateY(p, angle) {
-        const [x, y, z] = p;
-        const ca = Math.cos(angle);
-        const sa = Math.sin(angle);
-        return [x * ca + z * sa, y, -x * sa + z * ca];
+    cross(a, b) {
+        return [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0]
+        ];
     }
     
-    rotateX(p, angle) {
-        const [x, y, z] = p;
-        const ca = Math.cos(angle);
-        const sa = Math.sin(angle);
-        return [x, y * ca - z * sa, y * sa + z * ca];
+    dot(a, b) {
+        return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
     }
     
-    cameraSpace(p) {
-        let p1 = this.rotateY(p, this.camera.yaw);
-        let p2 = this.rotateX(p1, this.camera.pitch);
-        return [p2[0], p2[1], p2[2] + this.camera.dist];
-    }
-    
-    project(p) {
-        const [x, y, z] = this.cameraSpace(p);
-        if (z <= 0.08) return null;
-        
-        const w = this.canvas.width;
-        const h = this.canvas.height;
-        const s = (0.5 * w) / Math.tan(this.camera.fov * 0.5);
-        const sx = (x * s) / z + w * 0.5;
-        const sy = (-y * s) / z + h * 0.5;
-        return [sx, sy, z];
-    }
-    
-    nodeRadius(z, isDir) {
-        const base = isDir ? 45.0 : 35.0;
-        const clampedZ = Math.max(0.3, Math.min(40.0, z));
-        return Math.max(15.0, Math.min(80.0, base * (2.8 / clampedZ)));
+    normalize(v) {
+        const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        if (len > 0.00001) {
+            return [v[0] / len, v[1] / len, v[2] / len];
+        }
+        return v;
     }
     
     hitTest(mx, my) {
-        // Convert mouse coordinates to canvas coordinates
+        // Project each node and check if mouse is over it
         const rect = this.canvas.getBoundingClientRect();
-        const x = mx - rect.left;
-        const y = my - rect.top;
+        const x = ((mx - rect.left) / rect.width) * 2 - 1;
+        const y = -((my - rect.top) / rect.height) * 2 + 1;
         
-        for (const p of this.screenPoints) {
-            const dx = x - p.x;
-            const dy = y - p.y;
-            if (dx * dx + dy * dy <= p.r * p.r) {
-                return p;
+        // Simple proximity test - could be improved with ray casting
+        let closest = null;
+        let minDist = 0.15;
+        
+        for (const node of this.nodes) {
+            const projected = this.projectPoint(node.pos);
+            if (projected) {
+                const dx = projected[0] - x;
+                const dy = projected[1] - y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closest = node;
+                }
             }
         }
-        return null;
+        
+        return closest;
+    }
+    
+    projectPoint(pos) {
+        const viewMatrix = this.createLookAtMatrix(
+            this.camera.position,
+            this.camera.target,
+            this.camera.up
+        );
+        const projMatrix = this.createPerspectiveMatrix(
+            this.camera.fov,
+            this.canvas.width / this.canvas.height,
+            0.1,
+            100.0
+        );
+        
+        // Transform point
+        const x = pos[0], y = pos[1], z = pos[2];
+        
+        // Apply view matrix
+        let vx = viewMatrix[0] * x + viewMatrix[4] * y + viewMatrix[8] * z + viewMatrix[12];
+        let vy = viewMatrix[1] * x + viewMatrix[5] * y + viewMatrix[9] * z + viewMatrix[13];
+        let vz = viewMatrix[2] * x + viewMatrix[6] * y + viewMatrix[10] * z + viewMatrix[14];
+        let vw = viewMatrix[3] * x + viewMatrix[7] * y + viewMatrix[11] * z + viewMatrix[15];
+        
+        // Apply projection matrix
+        let px = projMatrix[0] * vx + projMatrix[4] * vy + projMatrix[8] * vz + projMatrix[12] * vw;
+        let py = projMatrix[1] * vx + projMatrix[5] * vy + projMatrix[9] * vz + projMatrix[13] * vw;
+        let pw = projMatrix[3] * vx + projMatrix[7] * vy + projMatrix[11] * vz + projMatrix[15] * vw;
+        
+        if (pw === 0) return null;
+        
+        return [px / pw, py / pw];
     }
     
     updateHover(mx, my) {
@@ -324,8 +484,8 @@ class FSNavigator {
     }
     
     zoom(delta) {
-        this.camera.dist = Math.max(2.2, Math.min(18.0, this.camera.dist + delta));
-        this.compute();
+        this.camera.dist = Math.max(2.5, Math.min(20.0, this.camera.dist + delta));
+        this.updateCameraPosition();
     }
     
     goUp() {
@@ -341,7 +501,6 @@ class FSNavigator {
             this.refresh();
         } else {
             console.log('Opening file:', node.path);
-            // In a real app, this would open the file
             alert('Opening file: ' + node.name);
         }
     }
@@ -353,8 +512,8 @@ class FSNavigator {
         hud.textContent = `${this.shortPath(this.currentPath)}   |   ${helpText}`;
         
         if (this.hover) {
-            const tag = this.hover.node.isDir ? 'dir' : 'file';
-            hint.textContent = `${tag}: ${this.shortPath(this.hover.node.path, 120)}`;
+            const tag = this.hover.isDir ? 'dir' : 'file';
+            hint.textContent = `${tag}: ${this.shortPath(this.hover.path, 120)}`;
         } else {
             hint.textContent = '';
         }
@@ -366,149 +525,246 @@ class FSNavigator {
     }
     
     render() {
-        const ctx = this.ctx;
+        const gl = this.gl;
         
-        // Clear with black background
-        ctx.fillStyle = 'rgb(0, 0, 0)';
-        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        // Clear
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         
-        this.drawGrid();
-        this.drawWires();
-        this.drawNodes();
+        // Setup matrices
+        const aspect = this.canvas.width / this.canvas.height;
+        const projectionMatrix = this.createPerspectiveMatrix(this.camera.fov, aspect, 0.1, 100.0);
+        const viewMatrix = this.createLookAtMatrix(
+            this.camera.position,
+            this.camera.target,
+            this.camera.up
+        );
+        
+        gl.useProgram(this.programInfo.program);
+        
+        // Draw floor
+        this.drawFloor(projectionMatrix, viewMatrix);
+        
+        // Draw nodes
+        this.drawNodes(projectionMatrix, viewMatrix);
         
         requestAnimationFrame(() => this.render());
     }
     
-    drawGrid() {
-        const ctx = this.ctx;
-        const w = this.canvas.width;
-        const h = this.canvas.height;
-        const step = 60;
+    drawFloor(projectionMatrix, viewMatrix) {
+        const gl = this.gl;
+        const size = 20;
+        const tileSize = 1.0;
+        const vertices = [];
+        const colors = [];
         
-        const toCSS = (c) => `rgba(${Math.floor(c[0] * 255)}, ${Math.floor(c[1] * 255)}, ${Math.floor(c[2] * 255)}, ${c[3]})`;
-        
-        ctx.strokeStyle = toCSS(COLORS.GRID);
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        
-        // Vertical lines
-        for (let x = 0; x <= w; x += step) {
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, h);
-        }
-        
-        // Horizontal lines
-        for (let y = 0; y <= h; y += step) {
-            ctx.moveTo(0, y);
-            ctx.lineTo(w, y);
-        }
-        
-        ctx.stroke();
-    }
-    
-    drawWires() {
-        const ctx = this.ctx;
-        const toCSS = (c) => `rgba(${Math.floor(c[0] * 255)}, ${Math.floor(c[1] * 255)}, ${Math.floor(c[2] * 255)}, ${c[3]})`;
-        
-        ctx.strokeStyle = toCSS(COLORS.WIRE);
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        
-        for (const p of this.screenPoints) {
-            if (p.node.parent && p.node.parent !== this.getParentPath(p.node.path)) {
-                // Find parent node in screen points
-                for (const parent of this.screenPoints) {
-                    if (parent.node.path === p.node.parent) {
-                        ctx.moveTo(parent.x, parent.y);
-                        ctx.lineTo(p.x, p.y);
-                        break;
-                    }
+        // Create checkered floor pattern
+        for (let x = -size/2; x < size/2; x++) {
+            for (let z = -size/2; z < size/2; z++) {
+                const isRed = (x + z) % 2 === 0;
+                const color = isRed ? COLORS.FLOOR_RED : COLORS.FLOOR_BLUE;
+                
+                const x1 = x * tileSize;
+                const z1 = z * tileSize;
+                const x2 = (x + 1) * tileSize;
+                const z2 = (z + 1) * tileSize;
+                const y = -0.01;
+                
+                // Two triangles per tile
+                vertices.push(
+                    x1, y, z1,
+                    x2, y, z1,
+                    x2, y, z2,
+                    x1, y, z1,
+                    x2, y, z2,
+                    x1, y, z2
+                );
+                
+                for (let i = 0; i < 6; i++) {
+                    colors.push(...color);
                 }
             }
         }
         
-        ctx.stroke();
-    }
-    
-    getParentPath(path) {
-        if (path === '/') return null;
-        const lastSlash = path.lastIndexOf('/');
-        return lastSlash === 0 ? '/' : path.substring(0, lastSlash);
-    }
-    
-    drawNodes() {
-        const ctx = this.ctx;
+        // Create and bind buffer
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
         
-        for (const p of this.screenPoints) {
-            const isHover = this.hover && this.hover.node.path === p.node.path;
-            let fillColor;
+        const colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+        
+        // Set uniforms
+        gl.uniformMatrix4fv(this.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+        gl.uniformMatrix4fv(this.programInfo.uniformLocations.modelViewMatrix, false, viewMatrix);
+        
+        // Position attribute
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.vertexAttribPointer(this.programInfo.attribLocations.position, 3, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.programInfo.attribLocations.position);
+        
+        // Color attribute
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.vertexAttribPointer(this.programInfo.attribLocations.color, 4, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.programInfo.attribLocations.color);
+        
+        // Draw
+        gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 3);
+        
+        // Draw grid lines
+        this.drawGridLines(projectionMatrix, viewMatrix, size, tileSize);
+    }
+    
+    drawGridLines(projectionMatrix, viewMatrix, size, tileSize) {
+        const gl = this.gl;
+        const vertices = [];
+        const colors = [];
+        const lineColor = COLORS.GRID_LINE;
+        
+        // Horizontal lines
+        for (let z = -size/2; z <= size/2; z++) {
+            vertices.push(
+                -size/2 * tileSize, 0, z * tileSize,
+                size/2 * tileSize, 0, z * tileSize
+            );
+            colors.push(...lineColor, ...lineColor);
+        }
+        
+        // Vertical lines
+        for (let x = -size/2; x <= size/2; x++) {
+            vertices.push(
+                x * tileSize, 0, -size/2 * tileSize,
+                x * tileSize, 0, size/2 * tileSize
+            );
+            colors.push(...lineColor, ...lineColor);
+        }
+        
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        
+        const colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+        
+        gl.uniformMatrix4fv(this.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+        gl.uniformMatrix4fv(this.programInfo.uniformLocations.modelViewMatrix, false, viewMatrix);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.vertexAttribPointer(this.programInfo.attribLocations.position, 3, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.programInfo.attribLocations.position);
+        
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.vertexAttribPointer(this.programInfo.attribLocations.color, 4, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.programInfo.attribLocations.color);
+        
+        gl.drawArrays(gl.LINES, 0, vertices.length / 3);
+    }
+    
+    drawNodes(projectionMatrix, viewMatrix) {
+        const gl = this.gl;
+        
+        for (const node of this.nodes) {
+            const isHover = this.hover && this.hover.path === node.path;
+            let color;
             
-            if (p.node.isDir) {
-                fillColor = COLORS.NODE_DIR;
+            if (node.isDir) {
+                color = COLORS.NODE_DIR;
             } else {
-                const colorIndex = this.hashCode(p.node.name) % COLORS.FILE_COLORS.length;
-                fillColor = COLORS.FILE_COLORS[Math.abs(colorIndex)];
+                const colorIndex = this.hashCode(node.name) % COLORS.FILE_COLORS.length;
+                color = COLORS.FILE_COLORS[Math.abs(colorIndex)];
             }
             
-            this.draw3DNode(ctx, p, fillColor, isHover);
+            this.drawNode(node, color, isHover, projectionMatrix, viewMatrix);
         }
     }
     
-    draw3DNode(ctx, p, color, isHover) {
-        const size = p.r;
-        const depth = size * 0.5;
+    drawNode(node, color, isHover, projectionMatrix, viewMatrix) {
+        const gl = this.gl;
+        const pos = node.pos;
         
-        if (p.node.isDir) {
-            // Draw as tall pedestal for directories
-            const w = size * 1.4;
-            const h = size * 2.2;
-            this.draw3DBox(ctx, p.x, p.y, w, h, depth, color, isHover);
-        } else {
-            // Draw as smaller box for files
-            const s = size * 1.0;
-            this.draw3DBox(ctx, p.x, p.y, s, s * 0.7, depth, color, isHover);
-        }
+        // Create box geometry
+        const width = node.isDir ? 0.3 : 0.25;
+        const height = node.isDir ? 0.8 : 0.3;
+        const depth = node.isDir ? 0.3 : 0.25;
+        
+        const vertices = this.createBoxVertices(width, height, depth);
+        const colors = this.createBoxColors(color, vertices.length / 3, isHover);
+        
+        // Create model matrix (translation)
+        const modelMatrix = this.createTranslationMatrix(pos[0], pos[1] + height/2, pos[2]);
+        const modelViewMatrix = this.multiplyMatrices(viewMatrix, modelMatrix);
+        
+        // Setup buffers
+        const buffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        
+        const colorBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.STATIC_DRAW);
+        
+        // Set uniforms
+        gl.uniformMatrix4fv(this.programInfo.uniformLocations.projectionMatrix, false, projectionMatrix);
+        gl.uniformMatrix4fv(this.programInfo.uniformLocations.modelViewMatrix, false, modelViewMatrix);
+        
+        // Position attribute
+        gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+        gl.vertexAttribPointer(this.programInfo.attribLocations.position, 3, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.programInfo.attribLocations.position);
+        
+        // Color attribute
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.vertexAttribPointer(this.programInfo.attribLocations.color, 4, gl.FLOAT, false, 0, 0);
+        gl.enableVertexAttribArray(this.programInfo.attribLocations.color);
+        
+        // Draw
+        gl.drawArrays(gl.TRIANGLES, 0, vertices.length / 3);
     }
     
-    draw3DBox(ctx, x, y, width, height, depth, baseColor, isHover) {
-        const depthX = depth * 0.5;
-        const depthY = depth * 0.3;
+    createBoxVertices(w, h, d) {
+        const w2 = w / 2;
+        const h2 = h / 2;
+        const d2 = d / 2;
         
-        // Convert color array to CSS color
-        const toCSS = (c, factor = 1) => {
-            return `rgba(${Math.floor(c[0] * 255 * factor)}, ${Math.floor(c[1] * 255 * factor)}, ${Math.floor(c[2] * 255 * factor)}, ${c[3]})`;
-        };
+        return [
+            // Front face
+            -w2, -h2, d2,  w2, -h2, d2,  w2, h2, d2,
+            -w2, -h2, d2,  w2, h2, d2,  -w2, h2, d2,
+            // Back face
+            -w2, -h2, -d2,  -w2, h2, -d2,  w2, h2, -d2,
+            -w2, -h2, -d2,  w2, h2, -d2,  w2, -h2, -d2,
+            // Top face
+            -w2, h2, -d2,  -w2, h2, d2,  w2, h2, d2,
+            -w2, h2, -d2,  w2, h2, d2,  w2, h2, -d2,
+            // Bottom face
+            -w2, -h2, -d2,  w2, -h2, -d2,  w2, -h2, d2,
+            -w2, -h2, -d2,  w2, -h2, d2,  -w2, -h2, d2,
+            // Right face
+            w2, -h2, -d2,  w2, h2, -d2,  w2, h2, d2,
+            w2, -h2, -d2,  w2, h2, d2,  w2, -h2, d2,
+            // Left face
+            -w2, -h2, -d2,  -w2, -h2, d2,  -w2, h2, d2,
+            -w2, -h2, -d2,  -w2, h2, d2,  -w2, h2, -d2,
+        ];
+    }
+    
+    createBoxColors(baseColor, numVertices, isHover) {
+        const colors = [];
+        const brightness = isHover ? 1.5 : 1.0;
         
-        // Right side (darker)
-        ctx.fillStyle = toCSS(baseColor, 0.6);
-        ctx.fillRect(x + width/2, y - height/2, depthX, height);
-        
-        // Top face
-        ctx.fillStyle = toCSS(baseColor, 1.0);
-        ctx.fillRect(x - width/2, y + height/2, width, depthY);
-        
-        // Top-right corner
-        ctx.fillStyle = toCSS(baseColor, 0.8);
-        ctx.fillRect(x + width/2, y + height/2, depthX, depthY);
-        
-        // Front face (brightest)
-        ctx.fillStyle = toCSS(baseColor, 1.3);
-        ctx.fillRect(x - width/2, y - height/2, width, height);
-        
-        // Outline
-        ctx.strokeStyle = isHover ? toCSS(COLORS.FG) : 'rgba(255, 255, 255, 0.4)';
-        ctx.lineWidth = isHover ? 2 : 1;
-        ctx.strokeRect(x - width/2, y - height/2, width, height);
-        
-        // Highlight on hover
-        if (isHover) {
-            ctx.fillStyle = toCSS(baseColor, 1.8);
-            if (height > width) { // directory
-                ctx.fillRect(x - width/2 + 2, y - height/2 + 2, 4, height - 4);
-            } else { // file
-                ctx.fillRect(x - width/2 + 1, y - height/2 + 1, 3, 3);
-            }
+        for (let i = 0; i < numVertices; i++) {
+            // Vary brightness by face
+            const faceBrightness = 0.7 + (i % 6) * 0.05;
+            colors.push(
+                baseColor[0] * brightness * faceBrightness,
+                baseColor[1] * brightness * faceBrightness,
+                baseColor[2] * brightness * faceBrightness,
+                baseColor[3]
+            );
         }
+        
+        return colors;
     }
     
     hashCode(str) {
