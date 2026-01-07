@@ -84,6 +84,59 @@ function expandMockFS() {
 }
 expandMockFS();
 
+// Easing functions for smooth animations
+const Easing = {
+    linear: (t) => t,
+    easeInOut: (t) => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+    easeOut: (t) => t * (2 - t),
+    easeIn: (t) => t * t,
+    easeInOutCubic: (t) => t < 0.5 ? 4 * t * t * t : (t - 1) * (2 * t - 2) * (2 * t - 2) + 1,
+    easeOutElastic: (t) => {
+        const c4 = (2 * Math.PI) / 3;
+        return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+    }
+};
+
+// Animation system
+class Animation {
+    constructor(from, to, duration, easingFn = Easing.easeInOutCubic, onUpdate, onComplete) {
+        this.from = from;
+        this.to = to;
+        this.duration = duration;
+        this.easingFn = easingFn;
+        this.onUpdate = onUpdate;
+        this.onComplete = onComplete;
+        this.startTime = Date.now();
+        this.completed = false;
+    }
+    
+    update() {
+        if (this.completed) return true;
+        
+        const now = Date.now();
+        const elapsed = now - this.startTime;
+        const progress = Math.min(elapsed / this.duration, 1.0);
+        const eased = this.easingFn(progress);
+        
+        // Interpolate value
+        const current = this.from + (this.to - this.from) * eased;
+        
+        if (this.onUpdate) {
+            this.onUpdate(current, eased);
+        }
+        
+        if (progress >= 1.0) {
+            this.completed = true;
+            if (this.onComplete) {
+                this.onComplete();
+            }
+            return true;
+        }
+        
+        return false;
+    }
+}
+
 // Camera state
 class Camera {
     constructor() {
@@ -94,6 +147,11 @@ class Camera {
         this.position = [0, 2.5, 6.0];
         this.target = [0, 0, 0];
         this.up = [0, 1, 0];
+        
+        // Target values for smooth animation
+        this.targetYaw = this.yaw;
+        this.targetPitch = this.pitch;
+        this.targetDist = this.dist;
     }
 }
 
