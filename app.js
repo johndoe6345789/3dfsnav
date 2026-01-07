@@ -1,4 +1,4 @@
-// Jurassic UNIX Navigator - WebGL Implementation
+// Jurassic UNIX Navigator - Canvas 2D Implementation
 // A cinematic 3D file system navigator inspired by Jurassic Park
 
 // Color scheme - authentic Jurassic Park FSN colors

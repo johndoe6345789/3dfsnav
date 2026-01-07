@@ -1,7 +1,7 @@
 {
   "name": "3dfsnav",
   "version": "1.0.0",
-  "description": "Jurassic UNIX Navigator - A cinematic 3D file system navigator inspired by Jurassic Park FSN",
+  "description": "Jurassic UNIX Navigator - A cinematic 3D file system navigator inspired by Jurassic Park FSN, rendered with Canvas 2D",
   "main": "index.html",
   "scripts": {
     "start": "npx http-server -p 8080",

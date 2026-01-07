@@ -1,6 +1,6 @@
-# Jurassic UNIX Navigator (WebGL)
+# Jurassic UNIX Navigator
 
-Cinematic homage to the Jurassic Park "UNIX system" moment, rendered with WebGL.
+Cinematic homage to the Jurassic Park "UNIX system" moment, rendered with Canvas 2D.
 
 A 3D file system navigator inspired by the iconic FSN interface from Jurassic Park, featuring:
 - Bright 3D geometric shapes (red pedestals for directories, colored cubes for files)
@@ -42,7 +42,7 @@ npm run test:headed
 ```
 
 ## Technology
-- Pure WebGL rendering for authentic 3D graphics
-- Canvas 2D API for node shapes
+- Canvas 2D API for pseudo-3D rendering
+- Pure JavaScript for 3D projection and camera transformations
 - Playwright for automated browser testing
 - No framework dependencies for the core application
