@@ -9,7 +9,7 @@ from typing import List, Optional, Tuple
 import pyglet
 from pyglet.window import key, mouse
 
-from .draw import clear, draw_grid, draw_node
+from .draw import clear, draw_grid, draw_node, draw_wire
 from .fs_graph import hit_test, make_nodes, screen_points, short_path
 from .style import (
     ACCENT,
@@ -18,8 +18,11 @@ from .style import (
     FG_DIM,
     GRID,
     NODE_DIR,
-    NODE_FILE,
+    FILE_NEW,
+    FILE_MID,
+    FILE_OLD,
     WARN,
+    WIRE,
 )
 from .types import Camera, ScreenPoint
 
@@ -48,7 +51,7 @@ class NavigatorWindow(pyglet.window.Window):
         self.limit = 140
         self.nodes = make_nodes(self.path, parent=self.path.parent, limit=self.limit)
 
-        self.cam = Camera(yaw=0.6, pitch=0.18, dist=7.2, fov=1.05)
+        self.cam = Camera(yaw=0.3, pitch=0.4, dist=4.5, fov=1.2)
         self.pts: List[ScreenPoint] = []
         self.hover: Optional[ScreenPoint] = None
 
@@ -123,12 +126,34 @@ class NavigatorWindow(pyglet.window.Window):
         batch = pyglet.graphics.Batch()
         draw_grid(batch, self.width, self.height, step=60, color=GRID)
 
+        # Draw connecting wires first (behind nodes)
+        for i, p in enumerate(self.pts):
+            if p.node.parent and p.node.parent != p.node.path.parent:
+                # Find parent node in pts
+                for parent_p in self.pts:
+                    if parent_p.node.path == p.node.parent:
+                        draw_wire(batch, parent_p.x, parent_p.y, p.x, p.y, WIRE)
+                        break
+
+        # Draw nodes on top
         for p in self.pts:
-            fill = NODE_DIR if p.node.is_dir else NODE_FILE
+            # Use age-based colors for files (simulate with simple variation)
+            if p.node.is_dir:
+                fill = NODE_DIR
+            else:
+                # Vary file colors based on name hash for visual variety
+                h = hash(p.node.name) % 3
+                if h == 0:
+                    fill = FILE_NEW
+                elif h == 1:
+                    fill = FILE_MID
+                else:
+                    fill = FILE_OLD
+            
             is_hover = self.hover and self.hover.node.path == p.node.path
             outline = FG if is_hover else FG_DIM
             width = 2.0 if is_hover else 1.0
-            draw_node(batch, p, fill=fill, outline=outline, width=width)
+            draw_node(batch, p, fill=fill, outline=outline, width=width, is_dir=p.node.is_dir)
 
         batch.draw()
 
