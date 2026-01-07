@@ -11,10 +11,6 @@ from .types import ScreenPoint
 RGBA = Tuple[int, int, int, int]
 
 
-def _c(c: RGBA) -> Tuple[int, int, int, int]:
-    return c
-
-
 def clear(bg: RGBA) -> None:
     r, g, b, a = bg
     gl.glClearColor(r / 255.0, g / 255.0, b / 255.0, a / 255.0)
