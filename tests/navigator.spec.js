@@ -305,14 +305,14 @@ test.describe('Jurassic UNIX Navigator', () => {
     await page.reload();
     await page.waitForLoadState('networkidle');
     
-    // Take screenshot immediately
-    await page.screenshot({ path: '/tmp/nodes-appearing-1.png' });
+    // Take screenshots at different stages - these will be in test-results
+    await page.screenshot({ path: 'test-results/nodes-appearing-1.png' });
     
     await page.waitForTimeout(500);
-    await page.screenshot({ path: '/tmp/nodes-appearing-2.png' });
+    await page.screenshot({ path: 'test-results/nodes-appearing-2.png' });
     
     await page.waitForTimeout(500);
-    await page.screenshot({ path: '/tmp/nodes-appearing-3.png' });
+    await page.screenshot({ path: 'test-results/nodes-appearing-3.png' });
     
     const hud = page.locator('#hud');
     await expect(hud).toBeVisible();
@@ -382,19 +382,19 @@ test.describe('Jurassic UNIX Navigator', () => {
   test('should take visual regression screenshots', async ({ page }) => {
     await page.waitForTimeout(2000);
     
-    // Default view
-    await page.screenshot({ path: '/tmp/visual-default.png', fullPage: true });
+    // Default view - use test-results directory
+    await page.screenshot({ path: 'test-results/visual-default.png', fullPage: true });
     
     // After zoom in
     await page.keyboard.press('+');
     await page.waitForTimeout(400);
-    await page.screenshot({ path: '/tmp/visual-zoomed-in.png', fullPage: true });
+    await page.screenshot({ path: 'test-results/visual-zoomed-in.png', fullPage: true });
     
     // After zoom out
     await page.keyboard.press('-');
     await page.keyboard.press('-');
     await page.waitForTimeout(400);
-    await page.screenshot({ path: '/tmp/visual-zoomed-out.png', fullPage: true });
+    await page.screenshot({ path: 'test-results/visual-zoomed-out.png', fullPage: true });
     
     const hud = page.locator('#hud');
     await expect(hud).toBeVisible();

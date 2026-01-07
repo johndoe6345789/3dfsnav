@@ -1,6 +1,11 @@
 // Jurassic UNIX Navigator - WebGL Implementation
 // A cinematic 3D file system navigator inspired by Jurassic Park
 
+// Configuration constants
+const DOUBLE_CLICK_TIMEOUT_MS = 300;
+const LABEL_MAX_LENGTH = 12;
+const LABEL_TRUNCATE_LENGTH = 10;
+
 // Color scheme - authentic Jurassic Park FSN colors
 const COLORS = {
     BG: [0, 0, 0, 1],
@@ -331,7 +336,7 @@ class FSNavigator {
                     const now = Date.now();
                     const timeSinceLastClick = now - this.lastClickTime;
                     
-                    if (timeSinceLastClick < 300) { // Double-click within 300ms
+                    if (timeSinceLastClick < DOUBLE_CLICK_TIMEOUT_MS) { // Double-click detection
                         // Clear any pending single-click action
                         if (this.clickTimeout) {
                             clearTimeout(this.clickTimeout);
@@ -345,7 +350,7 @@ class FSNavigator {
                         this.clickTimeout = setTimeout(() => {
                             this.selectNode(hit);
                             this.clickTimeout = null;
-                        }, 300);
+                        }, DOUBLE_CLICK_TIMEOUT_MS);
                         this.lastClickTime = now;
                     }
                 }
@@ -1156,8 +1161,8 @@ class FSNavigator {
             
             // Truncate long names
             let displayName = node.name;
-            if (displayName.length > 12) {
-                displayName = displayName.substring(0, 10) + '…';
+            if (displayName.length > LABEL_MAX_LENGTH) {
+                displayName = displayName.substring(0, LABEL_TRUNCATE_LENGTH) + '…';
             }
             
             ctx.fillText(displayName, screenX, screenY);
