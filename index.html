@@ -19,10 +19,22 @@
         }
         
         #canvas {
-            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100vw;
             height: 100vh;
             cursor: pointer;
+        }
+        
+        #labelCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            pointer-events: none;
+            z-index: 1;
         }
         
         #hud {
@@ -66,6 +78,7 @@
 </head>
 <body>
     <canvas id="canvas"></canvas>
+    <canvas id="labelCanvas"></canvas>
     <div id="header-left">FSN / Jurassic Mode</div>
     <div id="header-right">IT'S A UNIX SYSTEM</div>
     <div id="hud"></div>
